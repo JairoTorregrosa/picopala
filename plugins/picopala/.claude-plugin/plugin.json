@@ -1,0 +1,19 @@
+{
+  "name": "picopala",
+  "version": "1.0.0",
+  "description": "Agents Checking Agents -- multi-agent orchestration with cross-validation using Claude Code Agent Teams",
+  "author": {
+    "name": "Jairo Torregrosa",
+    "url": "https://github.com/JairoTorregrosa"
+  },
+  "repository": "https://github.com/JairoTorregrosa/picopala",
+  "license": "MIT",
+  "keywords": [
+    "multi-agent",
+    "orchestration",
+    "cross-review",
+    "quality-gates",
+    "agent-teams",
+    "dialectical-autocoding"
+  ]
+}

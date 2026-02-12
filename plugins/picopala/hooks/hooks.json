@@ -1,0 +1,16 @@
+{
+  "description": "Picopala quality gates — review-before-complete",
+  "hooks": {
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/task_completed.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
