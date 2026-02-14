@@ -31,7 +31,7 @@ Based on dialectical autocoding research: a structured coach/player feedback loo
 
 | Agent | Role | Tools | Model |
 |-------|------|-------|-------|
-| `picopala:picopala-worker` | Implement task or apply review fixes, commit, report to lead, shut down | Read, Edit, Write, Bash, Glob, Grep, WebFetch, WebSearch, SendMessage, TaskGet | opus |
+| `picopala:picopala-worker` | Implement task or apply review fixes, commit, report to lead, shut down | Read, Edit, Write, Bash, Glob, Grep, WebFetch, WebSearch, SendMessage, TaskGet (disallowed: TaskUpdate, TaskCreate, TaskList) | opus |
 | `picopala:picopala-reviewer` | Cross-review with APPROVE/REVISE verdict, run verification commands | Read, Glob, Grep, Bash (whitelisted), SendMessage, TaskGet | opus |
 
 Workers can edit files and run any commands. Reviewers **cannot edit** (`disallowedTools: Edit, Write`) but can run whitelisted read-only verification commands (tests, typecheck, lint) via a `PreToolUse` Bash filter hook.
@@ -102,7 +102,12 @@ Intake → Plan → Create Team → [Execute Wave → Iterative Cross-Review Loo
 1. **Scope**: What exactly should be built? What's in/out of scope?
 2. **Priorities**: What matters most — speed, quality, specific features?
 3. **Constraints**: Tech stack, patterns to follow, things to avoid?
-4. **Preferences**: How many agents? Max review rounds (default 2)? Model preferences?
+4. **Preferences**: How many agents? Max review rounds? Model preferences?
+
+**Review round trade-offs** (explain to user when asking):
+- **1 round**: No second chance — any REVISE verdict = task failure. Good for well-specified simple tasks.
+- **2 rounds** (default): One chance to fix review findings. Good balance of quality vs speed.
+- **3 rounds**: Two fix attempts. For complex tasks where first pass might miss nuances.
 
 Do NOT skip this phase. Do NOT assume scope, constraints, or priorities.
 
@@ -119,7 +124,7 @@ Do NOT skip this phase. Do NOT assume scope, constraints, or priorities.
 Each task declares explicit dependencies for maximum parallelization. Save to `<topic>-plan.md` using the template in [references/plan-template.md](references/plan-template.md).
 
 Optional per-task fields for advanced control:
-- **model**: Override model for worker/reviewer (e.g., `sonnet` for simpler tasks, `opus` for complex ones)
+- **model**: Override model for worker/reviewer. For trivial tasks (single-component changes, adding one element, copy edits), set `model: sonnet` to reduce cost. Reserve `opus` for tasks involving state machine changes, cross-file refactoring, or complex logic.
 - **max_review_rounds**: Override default max rounds for this specific task
 
 ### 1.3 Display Plan as ASCII Art
@@ -159,13 +164,15 @@ Spawn a Plan subagent to review for missing dependencies, ordering issues, gaps.
 **MANDATORY** before creating the team. Verify the working tree is clean:
 
 ```bash
-git status --porcelain
+git diff --name-only HEAD
 ```
 
-If the output is non-empty, STOP and tell the user:
-> "The working tree has uncommitted changes. Please commit or stash them before starting an picopala session. Uncommitted changes in the shared working tree will interfere with parallel workers."
+If the output is non-empty (tracked files have modifications), STOP and tell the user:
+> "The working tree has uncommitted tracked changes. Please commit or stash them before starting a picopala session. Uncommitted changes in the shared working tree will interfere with parallel workers."
 
-Do NOT proceed to team creation with a dirty working tree.
+Untracked files (`??` in `git status --porcelain`) are acceptable — they don't cause merge conflicts between parallel workers. Only modified tracked files require commit/stash.
+
+Do NOT proceed to team creation with modified tracked files.
 
 ### 2.2 Create Team
 
@@ -227,6 +234,10 @@ Task tool:
     Acceptance Criteria: [list from plan]
     Validation: [tests or verification steps]
 ```
+
+**i18n scoping** (if the task touches translation files): Add to the prompt: "i18n scope: only add/modify keys in the `[namespace]` namespace of translation files (e.g., en.json, es.json). Do NOT touch keys in other namespaces."
+
+> **Note on project-level quality hooks**: If the project has stop hooks (e.g., typecheck, lint), they may fire on the lead's turn and report errors from workers' in-progress code. This is expected noise during parallel execution — ignore until all workers in the current wave have completed and been shut down.
 
 ### 3.2 Workers Implement, Commit, Report
 
@@ -353,10 +364,21 @@ The lead only steps in if:
 
 All agents should already be shut down at this point (each was shut down after finishing its work).
 
-1. **Safety net**: If any agents are unexpectedly still active, send `shutdown_request` to each remaining teammate and wait for confirmation before proceeding.
-2. **TeamDelete** to remove team resources
-3. Remove state directory: `rm -rf ~/.claude/picopala-state/picopala-<topic>`
-4. Display execution summary using [references/summary-template.md](references/summary-template.md)
+1. **Safety net**: If any agents are unexpectedly still active, send `shutdown_request` to each remaining teammate. Wait up to **10 seconds** for `shutdown_response`. If a teammate does not respond:
+   - Send ONE more `shutdown_request` with explicit content: "All work is done. Please shut down immediately."
+   - Wait another 10 seconds. If still no response, proceed with force cleanup — remove team/task directories file-by-file (avoid `rm -rf` on home paths as security hooks may block it):
+     ```bash
+     rm ~/.claude/teams/picopala-<topic>/*.json 2>/dev/null; rmdir ~/.claude/teams/picopala-<topic> 2>/dev/null
+     rm ~/.claude/tasks/picopala-<topic>/*.json 2>/dev/null; rmdir ~/.claude/tasks/picopala-<topic> 2>/dev/null
+     ```
+   - Do NOT loop indefinitely waiting for unresponsive agents.
+2. **TeamDelete** to remove team resources (if agents responded and team still exists)
+3. Remove state directory:
+   ```bash
+   rm ~/.claude/picopala-state/picopala-<topic>/*.approved 2>/dev/null
+   rmdir ~/.claude/picopala-state/picopala-<topic> 2>/dev/null
+   ```
+4. **You MUST render the execution summary before finishing.** Use the template in [references/summary-template.md](references/summary-template.md). Show which tasks passed/failed, how many review rounds each took, and what files were changed.
 
 ---
 
